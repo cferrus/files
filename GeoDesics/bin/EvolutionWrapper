@@ -1,0 +1,340 @@
+#!/usr/bin/env perl
+require 5;
+use strict;
+use warnings FATAL=>'all';
+use vars qw(%opts $MACHINE $WORK $SCRATCH $ME $JOBID);
+use Getopt::Long qw (:config no_ignore_case);
+use Cwd qw(getcwd abs_path);
+use File::Path;
+use File::Copy;
+use File::Basename;
+use Carp qw (cluck);
+# Load SpEC perl modules
+use lib dirname(Cwd::abs_path(__FILE__));
+use Utils;
+use SpEC;
+use BatchJobTermination qw(SetupForNextRun);
+use Machines;
+use DotSpecOptions;
+
+$ME = basename(__FILE__);
+sub Help {
+    print STDERR <<END;
+Usage: $ME [options]
+OPTIONS:
+    This script is used to run evolutions in batch.  It is meant to be run from
+    a batch script, and is meant to include all the machine-independent things
+    that need to be done.  It should be used roughly like so:
+
+    For a generic option 'o', you must use either the syntax -o=\$VALUE or
+    -o="\$VALUE". Behavior is undefined if you don\'t use an equal sign.
+
+  =============================================================================
+  The 3 major functions of $ME:
+  =============================================================================
+  GetNumProcsToRun
+      Just before running ./SpEC, this is called to compare the requested
+      node count to the number of subdomains. The output will be the number
+      of processors to actually run mpirun/ibrun with.
+  CopyToScratch
+      First determines whether this is a chain, if so, it changes SCRATCH. If
+      not, it creates SCRATCH. Then it copies *.input and SpEC to SCRATCH,
+      Modifies allowed wallclock in Evolution.input, Modifies Evolution.input
+      for a restart if necessary.
+  SetupForNextRun
+      Determines if the job should be resubmitted, and if so, whether it
+      should be rerun from inside this batch script or in a new batch script.
+      Modifies input files appropriately. Sets up the new work directory.
+  =============================================================================
+  The rest of the options set various variables for $ME:
+  =============================================================================
+  -w DIR        Workdir. This is where the job was submitted from. [cwd]
+
+  -b MINUTES    Shutdown buffer.  The WallClock termination criterion is reduced
+                from the job walltime by this amount to give SpEC time to write
+                files and shut down once WallClock is reached. [$opts{'b'}]
+  -e MINUTES    Restart buffer.  Sets the walltime allotted for all the work of
+                a non-WallClock restart prior to starting the main evolution
+                loop. If the batch job has > 'e + 2*b' minutes remaining, then
+                we resubmit in the same batch job, otherwise a new job is
+                started. [$opts{'e'}]
+
+  -a String     Comma separated list of email addresses that will receive a
+                message if the run merges or terminates badly. [$opts{'a'}]
+  -f String     path/to/filename.  If specified, a shorter version of the
+                automated email about termination or merger will be appended
+                to this file. [$opts{'f'}]
+
+  -v            Verbose. Print debugging info to stderr.
+  -h            Help. Print this table.
+END
+}
+
+# Set the start time for the job (in seconds since the epoch)
+my $TSTART = time;
+
+eval { Main(); };
+my $Errors = $@;
+if ($Errors) {
+  # Job failed, send an e-mail and backup the segment
+  print STDERR "Caught errors: $Errors";
+  SpEC::JobNotify($Errors, $WORK, $SCRATCH, $opts{'a'}, $opts{'f'}, $JOBID);
+  $MACHINE->Backup($WORK,$SCRATCH,$opts{'a'},$JOBID);
+  exit 1;
+}
+exit 0;
+
+sub Main {
+  # Option parsing
+  #----------------------------------------------------------------------------
+  %opts = ('w'=>getcwd(), 'b'=>30, 'e'=>60, 'f'=>'', 'a'=>''); # default values
+  GetOptions(\%opts, 'w=s','b=i','e=i','f:s','a:s','v','h')
+    or (Help() and die "$ME: Failed option parsing");
+  Help() and exit(0) if $opts{'h'};
+
+  # Set the work directory as an absolute path
+  $WORK = abs_path($opts{'w'});
+
+  # Start the evolution loop
+  #----------------------------------------------------------------------------
+  $MACHINE = new Machines();
+  $JOBID = $MACHINE->GetJobID();
+
+  my $MachineName = $MACHINE->GetHost();
+  my $JobStartDate = `date`; chomp $JobStartDate;
+  print "Started job on $MachineName at $JobStartDate\n";
+  print "Run from directory $WORK\n";
+
+  print "JobID = $JOBID\n";
+
+  my $WalltimeHours = Utils::SystemOutput("MakeSubmit.py query Hours");
+  chomp($WalltimeHours);
+  my $WalltimeMins = $WalltimeHours * 60;
+
+  my $NextWork = $WORK;
+  my $ContinueJob = 1;      # initialize to true
+  my $Resubmit = 0;         # initialize to false
+  my $DoneSegment = 0;      # initialize to false
+  my $IsError = 0;          # initialize to false
+
+  # Copy the TensorYlm database to the local /tmp directory if requested.
+  my $TmpTensorYlmDbPath = $MACHINE->GetTmpTensorYlmDbPath();
+  if(defined $TmpTensorYlmDbPath) {
+    my %opts = DotSpecOptions::GetHash();
+    my $TensorYlmDataBaseDir = $opts{"TensorYlmDataBaseDir"};
+    unless (Utils::IsNonEmptyDirectory($TensorYlmDataBaseDir)) {
+      print "TensorYlmDataBaseDir $TensorYlmDataBaseDir is undefined, " .
+            "nonexistant, or empty. Therefore we will use the canonical " .
+            "TensorYlmDataBaseDir.\n";
+      $TensorYlmDataBaseDir = $MACHINE->GetCanonicalTensorYlmDb();
+      unless(Utils::IsNonEmptyDirectory($TensorYlmDataBaseDir)) {
+        die "Do not know what to do. We have an undefined/nonexistent/empty " .
+            "canonical TensorYlmDB $TensorYlmDataBaseDir for this machine, " .
+            "so we cannot copy anything to " .
+            "the temp path ${TmpTensorYlmDbPath}. Aborting.";
+      }
+    }
+    my $this_host  = $MACHINE->GetMasterNodeName();
+    my @node_names = $MACHINE->GetNodeNameList();
+
+    unless(defined $TensorYlmDataBaseDir and length $TensorYlmDataBaseDir) {
+        die "TensorYlmDataBaseDir is empty! " .
+            "Please add a TensorYlmDataBaseDir entry to your \$HOME/.SpEC\n";
+    }
+    
+    # First run on the local host.
+    print "Copying TensorYlmDB to /tmp on $this_host.\n";
+    # Don't do TrySystem because 'ls -l /tmp' can fail when everything
+    # is actually ok. 'ls -l /tmp' fails if any file or directory in
+    # /tmp is un-statable.  Apparently that happens frequently, at
+    # least on frontera, for files like 'dfuse' that don't matter
+    # in regards to TensorYlmDB.
+    Utils::System("ls -l /tmp",1,0); # 0 means don't die on failure.
+    Utils::TrySystem("mkdir -p $TmpTensorYlmDbPath",3,10,1);
+    Utils::TrySystem("ls -ld $TensorYlmDataBaseDir",3,10,1);
+    Utils::TrySystem("rsync -a --exclude '*pending*' " .
+                     "--exclude '*TestReadWriteAccess*' " .
+                     "${TensorYlmDataBaseDir}/ " .
+                     "$TmpTensorYlmDbPath",3,10,1);
+    print "Copied TensorYlmDB to /tmp on $this_host.\n";
+
+    # Now run on all the remote hosts.
+    foreach my $host (@node_names) {
+      if($host ne $this_host) {
+        Utils::TrySystemSsh("ls /tmp",$host,3,10,1);
+        Utils::TrySystemSsh("mkdir -p $TmpTensorYlmDbPath",$host,3,10,1);
+        Utils::TrySystemSsh("ls -ld $TensorYlmDataBaseDir",$host,3,10,1);
+        Utils::TrySystemSsh("rsync -a --exclude '*pending*' " .
+                            "--exclude '*TestReadWriteAccess*' " .
+                            "${TensorYlmDataBaseDir}/ " .
+                            "$TmpTensorYlmDbPath",$host,3,10,1);
+      }
+    }
+  }
+  
+  while ($ContinueJob) {
+    $WORK = $NextWork;  # update work directory
+    chdir($WORK) || die "Could not chdir $WORK";
+    # Set up scratch directory
+    $SCRATCH = $MACHINE->GetScratchDir($WORK,$JOBID);
+    CopyToScratch($SCRATCH, $WORK, $WalltimeMins, $opts{'b'});
+    chdir($SCRATCH) || die "Could not chdir $SCRATCH";
+    Utils::AppendToFile("$WORK/SpEC.jobid", "$JOBID $SCRATCH\n");
+
+    # Link the scratch directory to "Run" if it's not a SimpleScratch
+    if (-l "$WORK/Run" || not -d "$WORK/Run") {
+      unlink ("$WORK/Run");
+      my $Prefix = ($SCRATCH =~ m|$WORK|) ? qr|$WORK/| : qr||;
+      (my $Link = $SCRATCH) =~ s|$Prefix||;
+      Utils::MySymlink($Link, "$WORK/Run");
+    }
+
+    # Get the number of processors to run on
+    my $NumProcsToRun = GetNumProcsToRun();
+    print "Running on $NumProcsToRun processors.\n";
+
+    # Run the job
+    -x "$SCRATCH/SpEC" || die "File SpEC is nonexecutable or does not exist!";
+    my $StartDate = `date`; chomp $StartDate;
+    print "Begin execution of SpEC in $SCRATCH at $StartDate.\n";
+    my $MpiCmd = $MACHINE->GetMpiCmd($NumProcsToRun);
+    Utils::System("$MpiCmd ./SpEC >> SpEC.out 2>&1", $opts{'v'});
+    my $EndDate = `date`; chomp $EndDate;
+    print "Finished execution of SpEC in $SCRATCH at $EndDate.\n";
+
+    # Decide what to do next
+    ($ContinueJob, $NextWork, $Resubmit, $DoneSegment, $IsError) =
+      SetupForNextRun($WORK, $SCRATCH, $opts{a}, $opts{f}, $WalltimeMins,
+                      $TSTART, $opts{e}, $opts{b}, $opts{v}, $JOBID);
+    $MACHINE->Backup($WORK,$SCRATCH,$opts{'a'},$JOBID) if ($DoneSegment);
+  }
+
+  # Start a new job if requested
+  if ($Resubmit) {
+    Utils::System($MACHINE->GetResubCmd(WorkDir => $NextWork), $opts{'v'});
+  }
+
+  my $JobEndDate = `date`; chomp $JobEndDate;
+  print "Finished job at $JobEndDate\n";
+}
+
+#==============================================================================
+# Subroutines
+#==============================================================================
+
+sub GetNumProcsToRun {
+  # By default, NumProcsToRun is the requested Cores for this job
+  my $Nprocs = Utils::SystemOutput("MakeSubmit.py query Cores");
+  chomp($Nprocs);
+  $Nprocs =~ m/^\d+$/ || die "Failed to identify Nprocs for this job.";
+  my $NumProcsToRun = $Nprocs;
+
+  # Sanity check for processor count
+  my $NprocsMax = $MACHINE->GetNprocs();
+  if ($Nprocs > $NprocsMax) {
+    die "$ME: Requested $Nprocs procs, but the job only supports $NprocsMax."
+  } elsif ($Nprocs < $NprocsMax) {
+    warn "$ME: Requested $Nprocs procs, but the job can support up to ".
+         "$NprocsMax, so some procs will be unused.";
+  }
+
+  # Figure out number of subdomains.
+  my $Nsubdomains = SpEC::TotalNSubdomains(".");
+
+  # Change NumProcsToRun if there are too few subdomains, but don't set
+  # NumProcsToRun to 0 if there are no subdomains (e.g. because there
+  # are no *Domain.input files)
+  print STDERR "Number of subdomains = $Nsubdomains\n";
+  if (($Nsubdomains < $Nprocs) && ($Nsubdomains > 0)) {
+    print STDERR "You have requested $Nprocs processors, but there are ".
+        "only $Nsubdomains subdomains.\n";
+    $NumProcsToRun = $Nsubdomains;
+  }
+
+  return $NumProcsToRun;
+}
+
+#---------------
+# Creates SCRATCH and copies SpEC, *.input from WORK
+sub CopyToScratch {
+  my ($scratch, $workdir, $WalltimeMins, $ShutdownBuffer) = @_;
+
+  # Create scratch directory if it is really a new one.
+  mkpath($scratch) or die "$ME: Cannot mkdir $scratch" unless(-d $scratch);
+
+  # Copy SpEC to scratch
+  foreach my $file ("$workdir/SpEC") {
+    Utils::MyCopy($file,"$scratch/" . basename($file));
+  }
+  
+  # Grab text from input files.
+  my $InputFiles;
+  foreach my $file (glob "$workdir/*.input") {
+    $InputFiles->{basename($file)} = Utils::ReadFile($file);
+  }
+
+  # Modify time.
+  {
+    my $time        = time;
+    my $ElapsedMins = ($time-$TSTART)/60.0;
+    my $AllowedMins = int($WalltimeMins - $ElapsedMins - $ShutdownBuffer);
+    if ($AllowedMins <= 0) {
+      die "Requested wallclock minutes is non-positive: $AllowedMins.\n".
+          "Consider adjusting job duration -H/-M or shutdown buffer -b.\n";
+    }
+    ModifyAllowedWallClockTime($workdir,$InputFiles,$AllowedMins);
+  }
+
+  # Write the files.
+  foreach my $file (keys %$InputFiles) {
+    Utils::OverwriteFile("$scratch/" . $file,$InputFiles->{$file});
+  }
+
+  # Move TerminationReason.txt out of the way. This avoids infinite loops if
+  # the upcoming run is a restart and if that run fails without overwriting
+  # TerminationReason.txt.
+  if(-f "$scratch/TerminationReason.txt") {
+    move("$scratch/TerminationReason.txt",
+         "$scratch/TerminationReason.txtsav") 
+        or die "Cannot move $scratch/TerminationReason.txt";
+  }
+}
+
+#-----------------------------------------------------------
+# Medium-level Subroutines
+#-----------------------------------------------------------
+
+sub ModifyAllowedWallClockTime {
+  my($directory,$InputFiles,$minutes)=@_;
+
+  my @files = ListEvolutionInputFiles($directory);
+  foreach my $file (@files) {
+    my $found  = undef;
+    my $output = $InputFiles->{$file};
+    # only overwrite the first WallClock termination
+    if ($output =~ s/
+        (?<!Absolute)         # don't match AbsoluteWallClock
+        (WallClock\s*\(\s*[^\)]*(?=Seconds|Hours|Minutes))   # 1
+        (?:Seconds|Hours|Minutes)\s*=\s*[^\);]*              # not captured
+        ([^\)]*\))                                           # 2
+        /${1}Minutes=$minutes$2/x ) {
+      $found = 1;
+      $InputFiles->{$file} = $output;
+    }
+    unless($found) {
+      warn "$ME: Cannot find line 'WallClock(...),' in $file\n";
+    }
+  }
+}
+
+#---------------
+# Return an array listing all Evolution.input-like files in $directory.
+sub ListEvolutionInputFiles {
+  my($directory)=@_;
+  my @files;
+  foreach my $file (glob("$directory/Evolution*.input")) {
+    push(@files,basename($file)) if ($file =~ m/Evolution\d?\.input$/);
+  }
+  die "$ME: Found no Evolution.input files in '$directory'" if (not @files);
+  return @files;
+}

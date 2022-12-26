@@ -1,0 +1,109 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import sys, os
+from optparse import OptionParser
+
+
+def error(msg):
+    os.sys.stderr.write("##### JoinDatFiles -- ERRROR #####\n")
+    os.sys.stderr.write(msg)
+    os.sys.stderr.write('\n')
+    os.sys.exit(-1)
+
+
+usage="""%prog [options] file1.dat file2.dat ...
+
+Check that all files have identical headers (unless --take_first_header is
+specified), concatenate them and output the result to stdout.  Note: The order
+of files is SIGNIFICANT"""
+
+p=OptionParser(usage=usage)
+p.add_option("-w", "--wipe", default=False, action="store_true",
+             help="After joining, wipe non-monotonic timesteps such that the LATEST instance of a given time survives")
+p.add_option("--take_first_header", default=False, action="store_true",
+             help="Allows headers to not be identical between files. Uses the header of the first file in the output")
+p.add_option("-t", "--tolerance", default=1e-12, type="float",
+            help="Tolerance for --wipe: Time-steps have to be separated by at"
+            " least this much to be kept.")
+p.add_option("--clean_forward_first", default=False, action="store_true",
+             help="Within each file, pre-select timesteps based on *increasing*"
+             "time, before applying the cross-file decreasing time selection")
+p.add_option("--ignore_empty_lines", default=False, action="store_true",
+             help="Disregard empty lines in dat-file")
+
+(opts, args) = p.parse_args()
+headers={}
+data=[]
+for f in args:
+    if not os.path.exists(f):
+        error("# File '%s' not found"%f)
+    infile=open(f,"r")
+    line_number=0
+    headers[f]=[]
+    last_time=-1e10;
+    for line in infile:
+        line_number=line_number+1
+        if line[0]=="#":
+            headers[f].append(line)
+        else:
+            if(line.isspace() and opts.ignore_empty_lines):
+                sys.stderr.write("Ignored empty line in %s\n"%f)
+                continue
+            try:
+                time=float(line.split()[0])
+            except:
+                error("Cannot convert line %i of %s"
+                      %(line_number,f))
+            if(opts.clean_forward_first):
+                if(time>last_time):
+                    data.append([time, line])
+                    last_time=time
+            else:
+                data.append([time, line])
+    infile.close()
+
+################
+# Check headers
+################
+
+if not opts.take_first_header:
+    for f in args:
+        if headers[args[0]]!=headers[f]:
+            #sys.stderr.write("First header=\n")
+            #sys.stderr.write(headers[args[0]])
+            #sys.stderr.write("===\n")
+            #sys.stderr.write("Current header=")
+            #sys.stderr.write(headers[args[f]])
+            print(headers[args[0]])
+            print("====")
+            print(headers[f])
+            sys.stderr.write("Headers of files %s and %s don't match\n"%(args[0],f))
+            sys.exit(-1)
+
+################
+# Sort data
+################
+dataout=[]
+if opts.wipe:
+    data.reverse()
+    curr_time=data[0][0]+1
+    for d in data:
+        if d[0]<curr_time-opts.tolerance:
+            dataout.append(d[1])
+            curr_time=d[0]
+    dataout.reverse()
+else:
+    for d in data:
+        dataout.append(d[1])
+
+################
+# Output
+################
+
+for d in headers[args[0]]:
+    sys.stdout.write(d)
+for d in dataout:
+    sys.stdout.write(d)
+    

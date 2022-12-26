@@ -1,0 +1,229 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings FATAL => 'all';
+use Getopt::Long;
+Getopt::Long::Configure("no_ignore_case");
+use File::Path;
+use File::Copy;
+use File::Spec;
+use File::Basename;
+use Cwd qw(abs_path realpath);
+# Load SpEC perl modules
+use lib dirname(Cwd::abs_path(__FILE__));
+use SpEC;
+use Utils;
+use BatchJobTermination qw(SetupForNextRun GetTerminationCondition);
+use Machines;
+
+#------------------------------------------------------------------------------
+my $ME = basename(__FILE__);
+sub help {
+    print STDOUT <<"END";
+Usage: $ME [options]
+  This script is used to manually set up the work directory of a run that has
+  been stopped/terminated for any reason and needs to be restarted in a new
+  segment. Uses BatchJobTermination::SetupForNextRun to parse the previous
+  segment and set up the next segment as if it were done via EvolutionWrapper.
+
+  Starting in a new segment is the preferred method for restarting runs. It
+  preserves the old segment.
+
+REQUIRED OPTIONS:
+  -d DIR    Previous segment.
+OPTIONS (source code/execs):
+  # Must specify (-b and -e) or -E or none of these.
+  # If none, uses main executable and bin directory from the previous segment.
+  -e PATH   Path to main executable to copy.
+  -b PATH   Path to bin directory to copy.
+    OR
+  -E PATH   Path to main executable to copy. Must exist in a repository.
+            Will copy the bin directory from Support/bin of this repository.
+OPTIONS (logistics):
+  -S        Simple Mode. Does not modify input files from previous segment
+            except to change the restart string to a simple "FromLastStep".
+  -t DIR    Target directory to output the next segment.
+  -q        Submit the job when finished.
+  -v        Verbose. Print debugging info to stderr.
+  --hydro   Add hydro support executables/scripts to bin directory.
+  -h        Help. Print this table.
+END
+}
+
+# Modules to load are conditional on bin directory, so we must parse options
+# first to decide which bin directory to use!
+###############################################################################
+
+# Parse options
+my @ORIG_ARGV = @ARGV;
+my %opt;
+GetOptions(\%opt, 'q','v','h','A','S','d=s','b=s','e=s','E=s','t=s','hydro',
+           'recursive')
+  or (help() and exit(1));
+help() and exit(0) if $opt{h};
+help() and die "\nMust specify (-b and -e) or -E or none of these!\n"
+  unless (($opt{e} and $opt{b}) or $opt{E} or !($opt{e} or $opt{b} or $opt{E}));
+
+# Dangling cmd line args after option parsing is done indicate an unknown error
+die "$ME: Don't understand command line arguments '@ARGV'\n" if (@ARGV);
+
+# Error checking for previous segment
+defined($opt{d}) || die "$ME: Must specify -d option.\n";
+if ($opt{d} =~ m/~/) {
+  die "$ME: Cannot handle '~' in path names.\n".
+      "Don't quote the argument to the -d option!\n";
+}
+my $OldWork = abs_path($opt{d}); #abs_path can't handle literal '~'
+unless(defined($OldWork) and -d $OldWork) {
+  die "$ME: Old work directory $OldWork does not exist!";
+}
+
+# Determine source bin directory and executable
+my $prev_exec = realpath("$OldWork/SpEC") || die "Can't find previous exec";
+my $prev_bin = realpath("$OldWork/bin") || die "Can't find previous bin";
+my ($source_bin, $source_exec);
+if ($opt{e}) {
+  $source_exec = $opt{e};
+  $source_bin = $opt{b};
+} elsif ($opt{E}) {
+  $source_exec = $opt{E};
+  my $exec_dir = dirname($source_exec);
+  my $repo = `cd $exec_dir && git rev-parse --show-toplevel`;
+  chomp($repo);
+  die "\nIf using -E, exec must exist in a SpEC repository!\n" unless ($repo);
+  $source_bin = "$repo/Support/bin";
+} else {
+  $source_exec = $prev_exec;
+  $source_bin = $prev_bin;
+}
+
+$source_exec = realpath($source_exec);
+$source_bin = realpath($source_bin);
+# Note that the existence test '-e path' follows symlinks, so it
+# will return false if path is a broken symlink, as desired.
+die "Source exec '$source_exec' does not exist" if (not -e $source_exec);
+die "Source bin '$source_bin' does not exist" if (not -e $source_bin);
+die "Source bin MakeNextSegment '$source_bin/MakeNextSegment' does not exist"
+    if (not -e "$source_bin/MakeNextSegment");
+
+# Reinvoke script from the bin directory for consistency (if necessary)
+my $me = realpath(__FILE__);
+my $source_me = realpath("$source_bin/MakeNextSegment");
+unless ($me eq $source_me) {
+  die "Aborting infinite recursion: me=$me, source_me=$source_me"
+    if ($opt{recursive});
+  Utils::System("$source_me --recursive @ORIG_ARGV");
+  exit(0);
+}
+
+###############################################################################
+
+print STDOUT "Source exec: $source_exec\n";
+print STDOUT "Source bin: $source_bin\n";
+
+# Load environment from bin directory
+%ENV = SpEC::LoadEnvFromBin($source_bin);
+
+# Change the old work directory to point to the target directory
+if ($opt{t}) {
+  Utils::MakePathsAbsolute(\$opt{t});
+  my $LinkedOldWork = File::Spec->join($opt{t},basename($OldWork));
+  Utils::MySymlink($OldWork,$LinkedOldWork);
+  $OldWork = $LinkedOldWork;
+  warn("---------- NOTICE ----------\n".
+       "The -t option is not guaranteed to work without the -S option\n".
+       "because not all termination criteria have been tested for\n".
+       "compatibility. Please verify your output is in the right place!\n".
+       "----------------------------\n"
+  ) unless ($opt{S});
+}
+
+# Make new work dir and copy input files from old scratch
+my $OldScratch = "$OldWork/Run";
+print STDOUT "Old Scratch: $OldScratch\n";
+
+if ($opt{S}) {
+  DoSimple();
+} else {
+  # Advanced
+  my ($runjob, $NewWork, $resubmit, $DoneSegment, $IsError) =
+    SetupForNextRun($OldWork, $OldScratch, '', '', 0, 0, 0, 0, $opt{v}, 'n/a');
+  if($IsError) {
+    print STDOUT "$ME: SetupForNextRun returned an error. Giving up.\n";
+    exit 1;
+  } elsif (abs_path($NewWork) eq abs_path($OldWork)) {
+    # If SetupForNextRun wants to use the same work dir, manually set up
+    # the next segment (these always use simple restarts, so Simple is fine)
+    DoSimple();
+  } else {
+    if (($source_exec ne $prev_exec) or ($source_bin ne $prev_bin)) {
+      # If desired bin & exec are not the same as from the previous segment,
+      # replace the ones automatically generated by SetupForNextRun
+
+      if($NewWork =~ m|Ecc\d+$|) {
+        # The previous segment did eccentricity reduction, and now the
+        # new segment that has just been created is an EccN directory,
+        # where we want to do initial data.  So in this case, we don't
+        # want to have SpEC as an executable, we want Spells as an
+        # executable.
+        my $src_ex = $source_exec;
+        unless($src_ex =~ s|/Evolution/Executables/EvolveHyperbolicSystem$|/Elliptic/Executables/Spells|) {
+          die "Could not substitute for $src_ex";
+        }
+        rmtree("$NewWork/bin") || die "Could not rmtree $NewWork/bin";
+        if(-f "$NewWork/SpEC") {
+          unlink("$NewWork/SpEC")|| die "Could not unlink $NewWork/SpEC";
+        }
+        SpEC::MakeBinDir($source_bin,"$NewWork/bin",$src_ex,0,0,$opt{hydro});
+
+        # And now that we have updated the bin in the Ecc directory,
+        # we need to also update the bin and executable in the Ecc/Ev
+        # directory.
+        rmtree("$NewWork/Ev/bin") || die "Could not rmtree $NewWork/Ev/bin";
+        unlink("$NewWork/Ev/SpEC")|| die "Could not unlink $NewWork/Ev/SpEC";
+        SpEC::MakeBinDir($source_bin,"$NewWork/Ev/bin",$source_exec,
+            1,0,$opt{hydro});
+
+      } else {
+        # The new segment is a normal evolution segment, like Lev3_BB
+        rmtree("$NewWork/bin") || die "Could not rmtree $NewWork/bin";
+        unlink("$NewWork/SpEC")|| die "Could not unlink $NewWork/SpEC";
+        SpEC::MakeBinDir($source_bin,"$NewWork/bin",$source_exec,
+            1,0,$opt{hydro});
+      }
+    }
+    SubmitJob($OldScratch,$NewWork) if ($opt{q});
+  }
+}
+
+print STDOUT "$ME finished successfully.\n";
+exit 0;
+
+#------------------------------------------------------------------------------
+sub DoSimple {
+  # Simple
+  my $NextSegment = SpEC::GetNewSubmissionDirectory($OldWork);
+  print STDOUT "New Work: $NextSegment\n";
+  mkdir($NextSegment) || die "$ME: Cannot mkdir $NextSegment";
+  SpEC::MakeBinDir($source_bin,"$NextSegment/bin",$source_exec,1,0,$opt{hydro});
+
+  Utils::System("cp $OldScratch/*.input $NextSegment");
+  my $EvolutionInput = "$NextSegment/Evolution.input";
+  SpEC::ChangeEvolutionInputToRestartFromLastStep($OldScratch,0,$EvolutionInput);
+
+  # Need to create Submit.sh since SetupForNextRun didn't run (in $NextSegment)
+  Utils::System("MakeSubmit.py -d $NextSegment update");
+
+  SubmitJob($OldScratch,$NextSegment) if ($opt{q});
+}
+
+#------------------------------------------------------------------------------
+sub SubmitJob {
+  my ($OldRun, $NewWork) = @_;
+  my $Machine = new Machines();
+  my $FullSubmitCmd = $Machine->GetResubCmd("WorkDir" => $NewWork);
+
+  my $MachineName = $Machine->GetHost();
+  print STDOUT "Submitting job on machine '$MachineName':\n";
+  Utils::System($FullSubmitCmd, 1);
+}

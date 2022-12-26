@@ -1,0 +1,141 @@
+#!/usr/bin/env perl
+require 5;
+use strict;
+use warnings FATAL=>'all';
+use vars qw($opt_h $opt_v $opt_f $opt_a $MACHINE $WORK $SCRATCH $ME $JOBID);
+use Getopt::Long qw (:config no_ignore_case);
+use Cwd;
+use File::Path;
+use File::Copy;
+use File::Basename;
+use Carp qw (cluck);
+# Load SpEC perl modules
+use lib dirname(Cwd::abs_path(__FILE__));
+use Utils;
+use SpEC;
+use BatchJobTermination;
+use Machines;
+
+$ME = basename(__FILE__);
+sub Help {
+    print STDERR <<END;
+Usage: $ME [options]
+  This script is used to run EvolveGeodesics in batch.  It is meant to be run
+  from a batch script, and includes all the machine-independent things
+  that need to be done.
+
+OPTIONS:
+  -a        E-mail addresses to notify about job status.
+  -f        File to which job status should be appended.
+  -v        Verbose. Print debugging info to stderr.
+  -h        Help. Print this table.
+END
+}
+
+eval { Main(); };
+my $Errors = $@;
+if ($Errors) {
+  # Job failed, send an e-mail and backup the segment
+  print STDERR "Caught errors: $Errors";
+  SpEC::JobNotify($Errors, $WORK, $SCRATCH, $opt_a, $opt_f, $JOBID);
+  $MACHINE->Backup($WORK,$SCRATCH,$opt_a);
+  exit 1;
+}
+exit 0;
+
+sub Main {
+  $opt_a = "";
+  $opt_f = "";
+  GetOptions(
+    'a:s'   => \$opt_a,
+    'f:s'   => \$opt_f,
+    'v'   => \$opt_v,
+    'h'   => \$opt_h,
+  ) or (Help() and die "$ME: Failed option parsing");
+  Help() and exit(0) if $opt_h;
+
+  # Start the evolution loop
+  #----------------------------------------------------------------------------
+  $WORK = getcwd();  # returns absolute path
+  $MACHINE = new Machines();
+  $JOBID = $MACHINE->GetJobID();
+
+  my $JobStartDate = `date`; chomp $JobStartDate;
+  print "Started job at $JobStartDate\n";
+  print "Run from directory $WORK\n";
+  print "JobID = $JOBID\n";
+
+  my $NextWork = $WORK;
+  my $ContinueJob = 1;      # initialize to true
+  my $Resubmit = 0;         # initialize to false
+  my $DoneSegment = 0;      # initialize to false
+
+  while ($ContinueJob) {
+    $WORK = $NextWork;  # update work directory
+    chdir($WORK) || die "Could not chdir $WORK";
+    # Set up scratch directory (may be changed by CopyToScratch)
+    my $SCRATCH = $MACHINE->GetScratchDir($WORK,$JOBID);
+    CopyToScratch($SCRATCH, $WORK);
+    chdir($SCRATCH) || die "Could not chdir $SCRATCH";
+    Utils::AppendToFile("$WORK/SpEC.jobid", "$JOBID $SCRATCH\n");
+
+    # Link the scratch directory to "Run" if it's not a SimpleScratch
+    if (-l "$WORK/Run" || not -d "$WORK/Run") {
+      unlink ("$WORK/Run");
+      my $Prefix = ($SCRATCH =~ m|$WORK|) ? qr|$WORK/| : qr||;
+      (my $Link = $SCRATCH) =~ s|$Prefix||;
+      Utils::MySymlink($Link, "$WORK/Run");
+    }
+    Utils::MySymlink("$WORK/RestartInput", "RestartInput");
+
+    # Run the job
+    -x "$SCRATCH/SpEC" || die "File SpEC is nonexecutable or does not exist!";
+
+    my $StartDate = `date`; chomp $StartDate;
+    print "Begin execution of SpEC in $SCRATCH at $StartDate.\n";
+    {
+      my $Ncores = Utils::SystemOutput("MakeSubmit.py query Cores"); chomp $Ncores;
+      my $Ncpn   = Utils::SystemOutput("MakeSubmit.py query CoresPerNode"); chomp $Ncpn;
+      my $Nthreads = $Ncpn;
+      my $Nnodes = $Ncores / $Ncpn;
+      # In OpenMPI 1.7.4 and later, processes are bound to cpus by default.
+      # This is bad for multithreaded processes, so disable it.
+      local $ENV{SPEC_UNBIND_CPUS} = '1';
+      local $ENV{OMP_NUM_THREADS} = $Nthreads;
+      my $MpiThreadingCmd = $MACHINE->GetMpiThreadingCmd($Nnodes, $Nthreads);
+      Utils::System("$MpiThreadingCmd ./SpEC >> SpEC.out 2>&1", $opt_v);
+    }
+    my $EndDate = `date`; chomp $EndDate;
+    print "Finished execution of SpEC in $SCRATCH at $EndDate.\n";
+
+    # Decide what to do next
+    ($ContinueJob, $NextWork, $Resubmit, $DoneSegment) =
+      BatchJobTermination::SetupForNextRun($WORK,$SCRATCH,$opt_a,$opt_f,
+                                           0,0,0,0,$opt_v,$JOBID);
+    $MACHINE->Backup($WORK,$SCRATCH,$opt_a,$JOBID) if ($DoneSegment);
+  }
+
+  # Start a new job if requested
+  if ($Resubmit) {
+    Utils::System($MACHINE->GetResubCmd(WorkDir => $NextWork), $opt_v);
+  }
+  my $JobEndDate = `date`; chomp $JobEndDate;
+  print "Finished job at $JobEndDate\n";
+}
+
+#==============================================================================
+# Subroutines
+#==============================================================================
+
+# Creates SCRATCH and copies SpEC, *.input from WORK
+sub CopyToScratch {
+  my ($scratch, $workdir) = @_;
+
+  # Create scratch directory if it is really a new one.
+  mkpath($scratch) or die "$ME: Cannot mkdir $scratch" unless(-d $scratch);
+
+  # Copy stuff to scratch
+  foreach my $file ("$workdir/SpEC",glob "$workdir/*.input") {
+    Utils::MyCopy($file,"$scratch/" . basename($file));
+  }
+}

@@ -1,0 +1,466 @@
+#!/usr/bin/env perl
+use warnings;
+require 5;
+use strict;
+use vars qw($ME $RealBin
+            $opt_h $opt_n $opt_S $opt_r $opt_1 $opt_c $opt_e $opt_d
+            $opt_s $opt_B $opt_v $opt_f $opt_L $opt_b $opt_i $CWD);
+use Getopt::Std;
+use Cwd;
+use POSIX qw(floor);
+use File::Basename;
+# Load SpEC perl modules
+use lib dirname(Cwd::abs_path(__FILE__));
+use Utils;
+use SpEC;
+use Machines;
+use DotSpecOptions;
+
+#------------------------------------
+# Set 'ME' as name of the executable
+#------------------------------------
+$ME = basename(__FILE__);
+$CWD = getcwd();
+# We want to use $RealBin for finding executables to call using system
+# calls.  But dirname(__FILE__) points to either a bin directory or a
+# Support/Perl directory. If the former, then we use it.  If the
+# latter, then there is always a Support/bin directory next to
+# Support/Perl, and we want to use Support/bin because Support/bin
+# contains things (like python scripts and SpEC executables) that are
+# not in Support/Perl.  So "/../bin" does the trick for both cases.
+$RealBin = dirname(Cwd::abs_path(__FILE__)) . "/../bin";
+
+#--------------\
+# Help message  >
+#--------------/
+sub Help {
+    print STDERR <<"EoF";
+Usage: $ME [options]
+   Runs multiple instances of an executable that differ by details in the
+   input files, such as resolution in Domain.input.  Each instance will be run
+   in a separate subdirectory which will be created in the current directory.
+   In each of these subdirectories, a "bin" directory is created where the
+   specified executable (-e) and a standard set of support items are copied.
+
+   All input files are also copied and may be modified depending on the
+   contents of the DoMultipleRuns.input file.  This file contains
+   Perl code that is run in each directory. This code should call
+   the RunInDirectory() subroutine, which takes two or three arguments:
+   the name of the directory, a list of replacement rules, and an optional
+   list of options.
+   The replacement rule take the form
+      {Filename1 => {Key1=>Value1, Key2=>Value2,...},
+       Filename2 => {Key3=>Value3, Key4=>Value4,...},
+           ...
+      }
+   For each Filename, the given Keys are replaced by their Values.
+   Even if a Filename is not an *.input file, it will still be copied into
+   each directory and modified.
+
+   Filenames may be of the form "orig -> new", in which case the file named
+   'orig' will be compied into the directory with name 'new'.
+
+   The options are another hashref.  Supported options are:
+     RequireBinDir      -- require creation of a bin directory (default 0)
+     HydroInBinDir      -- Default 0
+     ImplicitInputCopy  -- copy all files matching *.input (default 1)
+     RequireReplacement -- require all substitutions to occur at least once
+                           (default 1)
+     GenerateSubmissionScript --- Create a MakeSubmit.input (default 0).
+     OptsToCreateSubmitScript --- Hash of options passed to 
+                                  CreateSubmitScript. Used only if 
+                                  GenerateSubmissionScript is 1 (default {}).
+
+Example 1:
+   If DoMultipleRuns.input contains
+         for(\$N=11;\$N<=31;\$N+=10) { 
+            RunInDirectory("Res" . \$N,
+                            {"Domain.input" => {"__N__"=>\$N} });
+         };
+   then the code will be run in directories Res11, Res21, and Res31
+   and in each directory any occurrence of the string '__N__'
+   in Domain.input will be replaced by either 11, 21, or 31 as appropriate.
+   Note that Perl variables have dollar signs in front of them, and
+   note also that the Perl string concatenation operator is a dot.
+   You can also use the Perl 'foreach' operator, which simply loops over
+   the values you specify. So the above example can be rewritten as
+         foreach \$N (11,21,31) { 
+            RunInDirectory("Res" . \$N,
+                            {"Domain.input" => {"__N__"=>\$N} });
+         };
+
+Example 2:
+   Suppose you want to change radial resolution and angular resolution.
+   Then DoMultipleRuns.input would look something like
+         for(\$Nr=11;\$Nr<=31;\$Nr+=10) { 
+            foreach \$L (5,9,13) { 
+               RunInDirectory("Res" . \$Nr . "L" . sprintf("%02i", \$L),
+                                {"Domain.input" => {"__Nr__"  => \$Nr,
+                                                    "__L__" => \$L}
+                                }
+                              );
+            }
+        }
+   Here the directories are names Res11L5, etc.
+
+PUBLIC SUBROUTINES:
+  RunInDirectory(dir,replacements,supplied_options)
+  CreateSubmitScript(Cores=>, Jobname=>, Hours=>, Account=>, Filename=>,
+                     Script=>,ForceCores=>, CoresPerNode=>, Queue=>, Preempt=>)
+  RunGetDotSpecOptions()
+  TmpTensorYlmDbPath()
+  TensorYlmDbPath()
+  TensorYlmDbIsReadOnly()
+  EvalPerlCodeInFile(file)
+
+OPTIONS:
+  -h            Help. Print this table.
+  -v            Verbose.
+  -f FILE       File to read user routine from: '$opt_f'
+  -i            Pass the -i option to MakeSubmit.py.
+                This bypasses sanity checks involving number of processors.
+For determining code source:
+  -e EXEC       Absolute or relative path to the evolution executable. This
+                will be linked as 'SpEC' in each subdirectory unless the
+                empty string is specified (in which case no link is made).
+                Current value is '$opt_e'
+  -b BIN_DIR    Generate a bin directory from BIN_DIR.
+                Default is the source of this script: '$RealBin'
+  -d CODE_HOME  Specify CODE_HOME instead of BIN_DIR to generate bin dir.
+  -B            Do NOT create a bin directory. (Do not use with batch jobs)
+  -L            Create a LINKED bin directory. (Use with caution)
+For running commands:
+  -c COMMAND    Command to execute. Current value is '$opt_c'
+  -n            Do not run the command. Just make the directories.
+For directory creation:
+  -1            Terminate after the 1st call to RunInDirectory.  This is
+                useful when finding typos in input files.
+  -r            Assume that the directories already exist, and
+                replace *.input files there and then run the code.
+                The -r option useful for continuing a run via a restart.
+                Incompatible with -s or -S.
+  -S            Skip existing directories with no changes. 
+                Incompatible with -r or -s.
+                This is useful if you want to redo some but not all
+                of the runs (just rm the ones you want to redo and
+                then $ME -S)
+  -s REGEXP     Skip specified existing directories with no changes. 
+                Incompatible with -r or -S.
+                Same as -S except here a regexp for directories is specified
+                explicitly.  So to redo all but the Lev3 directories, you 
+                could rm the ones you want to redo and then
+                say $ME -s '^Lev3_[A-Z]+$' (which would allow existing
+                directories that match 'Lev3_' followed by one or more
+                uppercase letters.  Leaving off the '^' in the regexp
+                would also match strings like 'MyLev3_AA' and leaving off
+                the '$' would also match strings like 'Lev3_AAfailed'.)
+
+
+EoF
+    exit(1);
+}
+
+#--------------\
+# Main routine  >
+#--------------/
+$opt_c="./SpEC | tee SpEC.out"; # command to execute
+$opt_e="$CWD/SpEC";             # path to executable
+$opt_f="DoMultipleRuns.input";
+$opt_s=undef;
+getopts('hic:s:d:b:BLrnSve:1f:') || Help(); Help() if $opt_h;
+
+# Dangling cmd line args after option parsing is done indicate an unknown error
+die "$ME: Don't understand command line arguments '@ARGV'\n" if (@ARGV);
+
+# Make the path to executable absolute
+Utils::MakePathsAbsolute(\$opt_e) if $opt_e;
+
+if($opt_r && $opt_S) {
+    warn "$ME: Cannot use both -r and -S\n"; Help();
+}
+if($opt_r && defined $opt_s) {
+    warn "$ME: Cannot use both -r and -s\n"; Help();
+}
+if($opt_S && defined $opt_s) {
+    warn "$ME: Cannot use both -S and -s\n"; Help();
+}
+
+# Determine default code source
+if($opt_b && $opt_d) {
+    warn "$ME: Cannot use both -d and -b\n"; Help();
+}
+if ($opt_d) {
+  $opt_b = "$opt_d/Support/bin";
+} elsif (!$opt_b) {
+  $opt_b = "$RealBin";
+}
+Utils::MakePathsAbsolute(\$opt_b);
+
+# Run DoMultipleRuns.input (or whatever was requested)
+EvalPerlCodeInFile($opt_f);
+
+#-----------\\
+#------------\\
+# Subroutines >>
+#------------//
+#-----------//
+
+
+#=================================================
+# Public subroutines
+#=================================================
+
+# Called from user subroutine.
+# '$dir' is a string containing the name of the new directory
+# $replacements is a hash reference containing the text to replace and the
+#    replacement for each filename. $replacements is of the form
+#    { FileName => {key => value, key => value , ... , key => value},
+#      FileName => {key => value, key => value , ... , key => value},
+#     ...
+#    }
+sub RunInDirectory {
+    my($dir,$replacements,$supplied_options) = @_;
+
+    # Sanity check
+    if(@_<2 or @_>3) {
+        die "$ME: RunInDirectory takes 2-3 arguments. You gave it "
+            . scalar(@_) . ".\n";
+    }
+
+    my %options = (
+                   RequireBinDir      => 0,
+                   HydroInBinDir  => 0,
+                   ImplicitInputCopy  => 1,
+                   RequireReplacement => 1,
+                   GenerateSubmissionScript => 0,
+                   OptsToCreateSubmitScript => {},
+                  );
+    foreach my $opt (keys %options) {
+      $options{$opt} = delete $supplied_options->{$opt}
+        if exists $supplied_options->{$opt};
+    }
+    die "$ME: Unknown options: " . (join ' ', keys %$supplied_options) . "\n"
+      if %$supplied_options;
+
+    local $/ = "\n";
+
+    if($opt_r) {
+        # Check if the directory is there.
+        -d $dir || die "$ME: -r option failed: Directory $dir not found.\n";
+
+    } else {
+        if(-d $dir) {
+          if($opt_S) {
+              # Skip this directory
+              warn "$ME: Skipping directory $dir because of -S\n";
+              return;
+          } elsif (defined($opt_s) && $dir =~ m/$opt_s/) {
+              # Skip this directory
+              warn "$ME: Skipping directory $dir because of -s \'$opt_s\'\n";
+              return;
+          } else {
+              die "$ME: Directory $dir exists. Please remove it.\n";
+          }
+        }
+        # Make the new directory including any parent directories
+        # that may be neccessary.
+        # Keep read permission.
+        Utils::System("mkdir -m 0755 -p $dir", $opt_v);
+        if (! -d $dir) {
+            die "$ME: Cannot mkdir $dir\n";
+        }
+
+        # Make the bin directory to save current execs/scripts
+        if ($opt_B) {
+          die "The use of '$ME -B' in batch jobs is not supported.\n".
+              "The file $opt_f indicates that a bin directory is required.\n".
+              "Either omit -B (recommended) or use '$ME -L'.\n"
+            if ($options{RequireBinDir});
+        } else {
+            SpEC::MakeBinDir($opt_b,"$dir/bin",$opt_e,$opt_e,$opt_L,
+                $options{HydroInBinDir});
+        }
+
+        # Link the main executable as SpEC (unless MakeBinDir already did)
+        my $LinkExecLoc = "$dir/SpEC";
+        if($opt_e and not -e $LinkExecLoc) {
+          Utils::MySymlink("$opt_e","$LinkExecLoc");
+        }
+    }
+
+    if($options{ImplicitInputCopy}) {
+        # Copy the input files
+        foreach my $file (glob "*.input") {
+            Utils::MyCopy("$file","$dir/$file");
+        }
+    }
+
+    # Copy replacement files and edit them
+    foreach my $file (keys %$replacements) {
+        my($infile,$outfile) = $file =~ /^(\S+)\s*->\s*(\S+)$/;
+        ($infile,$outfile) = ($file,$file) unless $infile;
+        die "$ME: RunInDirectory can't find file '$infile'" if (! -f $infile);
+        Utils::CopyAndSubInFile("$infile","$dir/$outfile",
+                                $replacements->{$file},
+                                $options{RequireReplacement});
+    }
+
+    chdir($dir) || die "$ME: Cannot chdir $dir\n";
+
+    if ($options{GenerateSubmissionScript}) {
+      my $copts = $options{OptsToCreateSubmitScript};
+      # Replace .SpEC options in MakeSubmit.input
+      my %dotspecopts = RunGetDotSpecOptions();
+      my $Email               = $dotspecopts{EmailAddresses};
+      my $TerminationInfoFile = $dotspecopts{TerminationInfoFile};
+      $copts->{Script} = '"' . 'EvolutionWrapper -v -a="' . "$Email" . '" ' .
+          '-f="' . "$TerminationInfoFile" . '""';
+      unless(defined $copts->{Cores}) {
+        my $NSubdomains = SpEC::TotalNSubdomains('.');
+        my $N    = floor( (48/62)*$NSubdomains );
+        my $Nmin = max(floor( (40/62)*$NSubdomains ),1);
+        my $Nmax = $NSubdomains;
+        my ($NewN, $NewCPN, $Queue) = Machines::GetNodeSetup(Nmin=>$Nmin,
+                                                             Nmax=>$Nmax, 
+                                                             N=>$N);
+        $copts->{Cores}        = $NewN;
+        $copts->{CoresPerNode} = $NewCPN;
+        if($Queue ne "SpECNoSuchQueue") {
+            $copts->{Queue}        = $Queue;
+        }
+      }
+      CreateSubmitScript(%$copts);
+    } elsif (-f "MakeSubmit.input") {
+      # This is the old behavior. Keep this here so that old
+      # DoMultipleRuns.input files don't break.
+      # Regenerate Submit.sh (since MakeSubmit.input may have been modified)
+      Utils::System("$opt_b/MakeSubmit.py update");
+    }
+    
+    unless ($opt_n) {
+        # Run the code
+        print STDOUT "$ME: Running in directory $dir\n" if($opt_v);
+        Utils::System("$opt_c", $opt_v) unless ($opt_n);
+    }
+    chdir($CWD) || die "$ME: Cannot chdir $CWD\n";
+
+    # Die if '-1' was specified.
+    exit(0) if($opt_1);
+}
+
+#-------------------------------------------------
+sub CreateSubmitScript {
+    my(%arg) = @_;
+    Utils::VerifyHashArgs(\%arg,"Cores","Jobname","Hours","Account","Filename",
+                          "Script",
+                          "ForceCores","CoresPerNode","Queue","Preempt",
+                          "AllowUnusedCores");
+    # ForceCores is false by default
+    my $ForceCores = (defined $arg{ForceCores}) ? $arg{ForceCores} : 0;
+    # Allow unused cores if not ForceCores
+    my $AllowUnused = $opt_i || $arg{AllowUnusedCores} || (not $ForceCores);
+
+    my $cmd = "$opt_b/MakeSubmit.py create";
+    $cmd .= " --cores $arg{Cores}"      if (defined $arg{Cores});
+    $cmd .= " --cpn $arg{CoresPerNode}" if (defined $arg{CoresPerNode});
+    $cmd .= " -J $arg{Jobname}"         if (defined $arg{Jobname});
+    $cmd .= " -H $arg{Hours}"           if (defined $arg{Hours});
+    $cmd .= " -A $arg{Account}"         if (defined $arg{Account});
+    $cmd .= " -f $arg{Filename}"        if (defined $arg{Filename});
+    $cmd .= " -g $arg{Script}"          if (defined $arg{Script});
+    $cmd .= " -q $arg{Queue}"           if (defined $arg{Queue});
+    $cmd .= " --Preempt $arg{Preempt}"  if (defined $arg{Preempt});
+    $cmd .= " -i"                       if ($AllowUnused);
+    $cmd .= " --force-cores"            if ($ForceCores);
+    Utils::System($cmd, $opt_v);
+}
+
+#-------------------------------------------------
+# Get default values for various BatchSubmission-related input file options.
+# These options are stored in ~/.SpEC and are parsed by GetDotSpecOptions.
+sub RunGetDotSpecOptions {
+  return DotSpecOptions::GetHash();
+}
+
+#-------------------------------------------------
+# If defined, the return value is the path that we are
+# to copy the TensorYlmDb to at the start of the run.
+sub TmpTensorYlmDbPath {
+  return new Machines()->GetTmpTensorYlmDbPath();
+}
+
+#-------------------------------------------------
+# The return value is the path to the TensorYlmDataBase.
+sub TensorYlmDbPath {
+  my %opts = RunGetDotSpecOptions();
+  my $TensorYlmDataBaseDir = $opts{"TensorYlmDataBaseDir"};
+  my $CanonicalTensorYlmDataBaseDir =
+      new Machines()->GetCanonicalTensorYlmDb();
+  if (defined $CanonicalTensorYlmDataBaseDir) {
+    unless(Utils::IsNonEmptyDirectory($CanonicalTensorYlmDataBaseDir)) {
+      die "The canonical TensorYlmDB $CanonicalTensorYlmDataBaseDir for " .
+          "this machine is nonexistent or empty. Aborting.";
+    }
+    unless (Utils::IsNonEmptyDirectory($TensorYlmDataBaseDir)) {
+      # The user's TensorYlmDB is nonexistent or unreadable or
+      # readable-but-empty, so use the canonical TensorYlmDB.
+      $TensorYlmDataBaseDir = $CanonicalTensorYlmDataBaseDir;
+    }
+  } elsif (not defined $TensorYlmDataBaseDir) {
+      print STDERR "\n".
+          "****************************************************************\n".
+          "There is no canonical TensorYlmDataBase defined on this machine.\n".
+          "Nor is there a TensorYlmDataBaseDir entry in ~/.SpEC.           \n".
+          "To use the TensorYlmDataBase, you should first define the       \n".
+          "option 'TensorYlmDataBaseDir' in ~/.SpEC. Since you did not     \n".
+          "define it, all TensorYlmTransformMatrix classes will be computed\n".
+          "on the fly, as needed. The syntax is, e.g.:                     \n".
+          "  TensorYlmDataBaseDir = ~/.TensorYlmDB;                        \n".
+          "****************************************************************\n";
+  }
+  return $TensorYlmDataBaseDir;
+}
+
+#-------------------------------------------------
+# The return value is the string "true" if TensorYlmDb is ReadOnly,
+# "false" if it is writable.
+sub TensorYlmDbIsReadOnly {
+  my %opts = RunGetDotSpecOptions();
+  my $TensorYlmDataBaseDir = $opts{"TensorYlmDataBaseDir"};
+  my $CanonicalTensorYlmDataBaseDir =
+      new Machines()->GetCanonicalTensorYlmDb();
+  my $IsReadOnly = "false";
+  if (defined $CanonicalTensorYlmDataBaseDir) {
+    unless(Utils::IsNonEmptyDirectory($CanonicalTensorYlmDataBaseDir)) {
+      die "The canonical TensorYlmDB $CanonicalTensorYlmDataBaseDir for " .
+          "this machine is nonexistent or empty. Aborting.";
+    }
+    unless (Utils::IsNonEmptyDirectory($TensorYlmDataBaseDir)) {
+      # The user's TensorYlmDB is nonexistent or unreadable or
+      # readable-but-empty, so use the canonical TensorYlmDB, which
+      # means that readonly is 'true'.
+      $IsReadOnly = "true";
+    }
+  }
+  return $IsReadOnly;
+}
+
+#-------------------------------------------------
+# Gets Perl code from a file and evaluates it.
+sub EvalPerlCodeInFile {
+  my($file)=@_;   # Gets the local variable $file from passed-in argument
+  local $_;       # Makes $_ a local instead of a global var in this scope.
+
+  # Test syntax of the file (e.g. DoMultipleRuns.input)
+  die "Cannot find $file" unless (-f $file);
+  my $testsyntax=`perl -wc $file 2>&1`;
+  die "$ME: Perl does not understand $file:\n$testsyntax" if($?>>8);
+
+  my $code="no strict;"; # Don't require strictness is user input code
+  $code .= Utils::ReadFile($file);
+
+  # Two-stage evaluation avoids absurdly verbose error messages
+  my $sub = eval "sub { $code }"; # eval compiles and executes $code as perl.
+  die $@ if $@; # Catch error messages from $code
+  $sub->();
+}
