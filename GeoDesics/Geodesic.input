@@ -5,7 +5,7 @@ Output =
     DenseTrigger = EveryDeltaT(DeltaT = -0.1; Tstart = 100);
    );
   MemoryTriggers =;
-  ForceDiskTriggerOnTermination = true;
+  ForceDiskTriggerOnTermination = false;
 );
 
 #---------------------
