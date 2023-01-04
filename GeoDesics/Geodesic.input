@@ -2,10 +2,10 @@ Output =
 (
   DiskTriggers =
    Add(
-    DenseTrigger = EveryDeltaT(DeltaT = -0.1; Tstart = 100);
+    DenseTrigger = EveryDeltaT(DeltaT = -0.1; Tstart = 1500);
    );
-  MemoryTriggers =;
-  ForceDiskTriggerOnTermination = false;
+  #MemoryTriggers =;
+  ForceDiskTriggerOnTermination = true;
 );
 
 #---------------------

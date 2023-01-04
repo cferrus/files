@@ -2,7 +2,7 @@
 # If you edit this file by hand, run `MakeSubmit.py update`.
 [main]
 Account = cca
-Jobname = Lensing
+Jobname = Lensingnq1
 Hours = 24.0
 Queue = cca
 Cores = 128

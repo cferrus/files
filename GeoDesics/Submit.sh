@@ -1,5 +1,5 @@
 #!/bin/bash -
-#SBATCH -J Lensing                   # Job Name
+#SBATCH -J Lensingnq1                   # Job Name
 #SBATCH -o SpEC.stdout                # Output file name
 #SBATCH -e SpEC.stderr                # Error file name
 #SBATCH -n 128                  # Number of cores

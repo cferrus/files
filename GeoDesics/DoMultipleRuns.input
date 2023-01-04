@@ -2,7 +2,7 @@
 
 ######### User defined options here ###################################
 
-$RunName="Lensing";
+$RunName="Lensingnq1";
 
 $HoursToRun = 24;   # if undef, determined by GetSubmissionScript
 $NodesForRun = 1;
@@ -15,7 +15,7 @@ $ThreadsPerNode = 128;
 $SubmissionScript="MakeSubmit.input";
 
 #When do you want the geodesics to start evolving?
-$StartTime = 100;
+$StartTime = 1500;
 
 #Geodesics SHOULD be terminated by the distance check or the redshift check,
 # to see if it comes from infinity or the black hole, respectively.
@@ -80,6 +80,6 @@ RunInDirectory($RunDirectory,
   {
     "__EmailAddresses__" => $EmailAddresses,
     "__TerminationInfoFile__" => $TerminationInfoFile,
-    "__Directory__" => "/mnt/ceph/users/cferrus/STEvolution/GeoDesics/${RunName}",
+#    "__Directory__" => "/mnt/ceph/users/cferrus/STEvolution/GeoDesics/${RunName}",
   }
 }); #end of run in directory

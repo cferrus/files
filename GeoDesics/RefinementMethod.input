@@ -6,8 +6,9 @@
 # * first iteration traces a hexagonal grid of geodesics, subsequent iterations
 #   use adaptive refinement to choose geodesics to evolve
 RefinementMethod = SpaceOneFrame(
-  MaxSkySep = 5;
+  MaxSkySep = 10;
   InitialResolutionX = 20;
-  MaxIterations = 5;
+  MaxIterations = 1;
+  MaxRefinementDepthPerIteration = 1;
 );
 
