@@ -1,0 +1,85 @@
+#!/usr/bin/env perl
+
+######### User defined options here ###################################
+
+$RunName="Lensingn13";
+
+$HoursToRun = 24;   # if undef, determined by GetSubmissionScript
+$NodesForRun = 1;
+
+#should be equal to the number of procs per node
+$ThreadsPerNode = 128;
+
+#This is generated from GetSubmissionScript and EvolveGeodesicsWrapper
+#Choose something else to use your own submission file.
+$SubmissionScript="MakeSubmit.input";
+
+#When do you want the geodesics to start evolving?
+$StartTime = 1500;
+
+#Geodesics SHOULD be terminated by the distance check or the redshift check,
+# to see if it comes from infinity or the black hole, respectively.
+#This time is used to stop the evolution for geodesices for which we were
+# unable to determine the origin.
+#In general it should be
+# $StartTime - {camera distance} - {termination distance, usually 100} - O(200)
+$EndTime = 0;
+
+#Final notes:
+# * You can set the cutoff value of redshift in Geodesic.input, by changing
+#   the MinkowskiNormTerminator Value.
+# * You can set the cutoff used to determine if a geodesic came from infinity
+#   by changing the OffsetSphereTerminator value in Geodesic.input
+
+######### DON'T NEED TO CHANGE ANYTHING AFTER HERE ####################
+
+my $TotalNumProcs = int($ThreadsPerNode * $NodesForRun);
+CreateSubmitScript(
+  Cores    => $TotalNumProcs,
+  Jobname  => $RunName,
+  Hours    => $HoursToRun,
+  Filename => "Qsub.input",
+);
+
+# Read updated HoursToRun from Submit script
+unless(defined($HoursToRun)) {
+  my $text = Utils::ReadFile('MakeSubmit.input');
+  if($text =~ m|^\s*Hours\s*=\s*(\S+)\s*$|m) {
+    $HoursToRun = $1;
+  } else {
+    die "Cannot find 'Hours' in MakeSubmit.input";
+  }
+}
+
+###### Get the preferences set in the user's ~/.SpEC file ##############
+my %opts = RunGetDotSpecOptions();
+
+$EmailAddresses = $opts{"EmailAddresses"};
+$TerminationInfoFile = $opts{"TerminationInfoFile"};
+
+########## READY TO DO RUNS! ####################
+
+$RunDirectory="${RunName}/Lev_AA/Run_AA";
+
+RunInDirectory($RunDirectory,
+{
+"Camera.input" =>
+  {
+    "__START_TIME__"=>$StartTime,
+  },
+"Evolution.input" =>
+  {
+    "__RUN_TIME_IN_HOURS__"=>sprintf("%.2f", $HoursToRun),
+    "__PROCS_PER_NODE__"=>$ThreadsPerNode,
+  },
+"Geodesic.input" =>
+  {
+    "__END_TIME__"=>$EndTime,
+  },
+"$SubmissionScript" =>
+  {
+    "__EmailAddresses__" => $EmailAddresses,
+    "__TerminationInfoFile__" => $TerminationInfoFile,
+#    "__Directory__" => "/mnt/ceph/users/cferrus/STEvolution/GeoDesics/${RunName}",
+  }
+}); #end of run in directory

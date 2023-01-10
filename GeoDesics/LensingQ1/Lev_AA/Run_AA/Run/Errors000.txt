@@ -1,0 +1,24 @@
+
+#######################  REQUIRE  FAILED  #######################
+#### !KeyExists(key)  violated
+#### DataBox.cpp (line 350)
+Inserting already existing item 'DomainDestructed' into DataBox 'PointwiseInterpolatorContainer'
+Item already in DataBox was added from:
+Added by hi
+New item attempted to be added from:
+Added by hi
+#################################################################
+
+0   SpEC            0x2131e5d  CodeError::CodeError(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool) + 93
+1   SpEC             0xb45547  0x0 + 11818311
+2   SpEC            0x21862dd  DataBox::CheckInsertability(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const + 397
+3   SpEC            0x2187537  DataBox::InsertAndOwnItem(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, ItemBase*) + 39
+4   SpEC            0x13cc615  void DataBoxInserter::AddVolatileItem<bool>(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, bool const&) const + 149
+5   SpEC            0x13c7c49  InterpolatorDataReaders::InterpolatorCachedH5Reader::InterpolatorCachedH5Reader(MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<int> const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<int> const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, double, bool, bool, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, MpiCommunicator const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, int, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, CachedTensorsOverTime&, DataBox&) + 8969
+6   SpEC            0x13ca761  InterpolatorDataReaders::InterpolatorCachedH5Reader::Create(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, MpiCommunicator const&, CachedTensorsOverTime&, DataBox&) + 2737
+7   SpEC            0x142d0f6  PointwiseInterpolator::PointwiseInterpolator(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, CachedTensorsOverTime&, MpiCommunicator const&, DataBox&) + 2310
+8   SpEC            0x142a3b2  PointwiseInterpolatorContainer::PointwiseInterpolatorContainer(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, MpiCommunicator const&, bool, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) + 626
+9   SpEC             0xb5a736  main + 774
+10  libc.so.6  0x155550284cf3  __libc_start_main + 243
+11  SpEC             0xbbd7de  _start + 46
+

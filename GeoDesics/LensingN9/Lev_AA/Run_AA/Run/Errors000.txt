@@ -1,0 +1,19 @@
+
+#######################  REQUIRE  FAILED  #######################
+#### file_id>=0  violated
+#### DataMeshReaderH5.cpp (line 165)
+Cannot open '/mnt/home/cferrus/ceph/RayTracing/q2-s005-s005-n9/Ev/Lev3_AM/Run/MetricData/Vars_CylinderEE1.0.0_0.0.0.h5'
+#################################################################
+
+0   SpEC            0x2131e5d  CodeError::CodeError(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool) + 93
+1   SpEC             0xb45547  0x0 + 11818311
+2   SpEC            0x20c7071  DataMeshReaderH5::GetTimeStamps(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const + 4929
+3   SpEC            0x208817e  CachedDataMeshReaderH5::GetTimeStamps(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const + 14
+4   SpEC            0x13c744b  InterpolatorDataReaders::InterpolatorCachedH5Reader::InterpolatorCachedH5Reader(MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<int> const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<int> const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, double, bool, bool, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, MpiCommunicator const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, int, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, CachedTensorsOverTime&, DataBox&) + 6923
+5   SpEC            0x13ca761  InterpolatorDataReaders::InterpolatorCachedH5Reader::Create(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, MpiCommunicator const&, CachedTensorsOverTime&, DataBox&) + 2737
+6   SpEC            0x142d0f6  PointwiseInterpolator::PointwiseInterpolator(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, CachedTensorsOverTime&, MpiCommunicator const&, DataBox&) + 2310
+7   SpEC            0x142a3b2  PointwiseInterpolatorContainer::PointwiseInterpolatorContainer(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, MpiCommunicator const&, bool, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) + 626
+8   SpEC             0xb5a736  main + 774
+9   libc.so.6  0x155550284cf3  __libc_start_main + 243
+10  SpEC             0xbbd7de  _start + 46
+
