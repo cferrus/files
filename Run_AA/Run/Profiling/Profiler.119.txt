@@ -1,0 +1,63 @@
+Hours Elapsed = 0.0687037;
+================ Profiler-Results ================
+                                      Event    cum(%)    exc(%)    inc(%)   N
+-----------------------------------------------------------------------------
+CachedH5Reader::Constructor                      76.5      76.5      90.4   1
+CachedH5Reader::SetupAndAddDataBoxStuff          90.4      13.9      13.9  26
+DormandPrince5::Integrate -- error diag          90.4  0.000699  0.000699   3
+DormandPrince5::Integrate -- start               90.4  0.000613  0.000613   3
+MPI::MPreduceMax(OdeErrorMeasureAbsolute)        90.4  0.000380  0.000390   3
+AdaptiveDense::ClearInternalState                90.4  1.29e-05  1.29e-05   3
+DormandPrince5::Integrate -- rhs                 90.4  1.13e-05  1.13e-05   6
+AdaptiveDense::Integrate                         90.4  6.87e-06   0.00173   3
+MPI                                              90.4  5.66e-06  1.05e-05   3
+MPI::MPreduceMax(double)                         90.4  4.85e-06  4.85e-06   3
+DormandPrince5::Integrate                        90.4  3.64e-06   0.00172   3
+DormandPrince5::Integrate -- error estimate      90.4  1.21e-06  0.000391   3
+DormandPrince5::Integrate -- init                90.4  8.09e-07  8.09e-07   3
+DormandPrince5::Integrate -- update              90.4  8.09e-07  8.09e-07   3
+======== This list includes 3.73min of total profiled time 4.12min ========
+Hours Elapsed = 0.0699561;
+================ Profiler-Results ================
+                                                         Event    cum(%)    exc(%)    inc(%)     N
+--------------------------------------------------------------------------------------------------
+CachedH5Reader::Constructor                                         75.1      75.1      88.8     1
+CachedH5Reader::SetupAndAddDataBoxStuff                             88.8      13.7      13.7    26
+MultiDistortedSphereMap::SetAngularGrid_PostReturn                  89.5     0.689     0.689     7
+CachedH5Reader::GetSequentialTensors                                89.9     0.420      1.22     7
+MultiDistortedSphereMap::IsActive                                   90.0     0.105     0.105     1
+CardinalInterpolator: total                                         90.0   0.00762   0.00762  2100
+PointwiseInterpolator::InterpInSpace                                90.0   0.00213   0.00976    84
+CachedLambdaCoefs::Update                                           90.0   0.00117   0.00117    12
+DormandPrince5::Integrate -- error diag                             90.0  0.000690  0.000690    16
+DormandPrince5::Integrate -- start                                  90.0  0.000617  0.000617    16
+ComposeSpatialCoordMapsFromHolder::CalcMappedCoords                 90.0  0.000593  0.000823    42
+MPI::MPreduceMax(OdeErrorMeasureAbsolute)                           90.0  0.000390  0.000423    15
+NormalizedGeodesic::ComputeRhs                                      90.0  0.000231      1.23     7
+PointwiseInterpolator::InterpTensors                                90.0  0.000131      1.23     7
+CachedData::Lambda                                                  90.0  0.000110   0.00128    28
+ComposeSpatialCoordMapsFromHolder::MappedCoords                     90.0  0.000106  0.000929    14
+EvolveGeodesicSystem::ParallelLoop                                  90.0  7.74e-05       0.0     0
+DormandPrince5::Integrate -- rhs                                    90.0  7.39e-05      1.23    32
+PointwiseInterpolator::InterpInTime                                 90.0  5.84e-05  5.84e-05    14
+AdaptiveDense::Integrate                                            90.0  4.49e-05      1.23    16
+AdaptiveDense::ClearInternalState                                   90.0  3.77e-05  3.77e-05     9
+CachedTensors::ObtainTensor                                         90.0  3.69e-05  3.69e-05    42
+CachedH5Reader::GetSingleTensor                                     90.0  3.42e-05  3.42e-05     7
+MultiDistortedSphereMap::MappedCoords                               90.0  2.54e-05  2.54e-05    14
+DistortedSphereMapHelpers::TargetMeshIsAlignedWithCoeffs            90.0  2.26e-05  2.26e-05    28
+TranslationXForCutSphereWithShape::InvMappedCoords                  90.0  2.26e-05  2.26e-05    14
+MPI::MPreduceMax(double)                                            90.0  1.79e-05  1.79e-05    16
+MPI                                                                 90.0  1.75e-05  3.53e-05    16
+DormandPrince5::Integrate                                           90.0  1.71e-05      1.23    16
+DormandPrince5::Integrate -- error estimate                         90.0  1.19e-05  0.000437    16
+TranslationXForCutSphereWithShape::MappedCoords                     90.0  1.11e-05  1.11e-05    14
+DormandPrince5::Integrate -- update                                 90.0  1.11e-05  1.11e-05    16
+SpatialDerivLapseFromGhKappa::Compute_DLapse(after LapseCubed)      90.0  7.15e-06  7.15e-06     7
+SpatialDerivLapseFromGhKappa::LapseCubed                            90.0  7.15e-06  7.15e-06     7
+DormandPrince5::Integrate -- init                                   90.0  5.96e-06  5.96e-06    16
+DormandPrince5::PrepareDenseOutput                                  90.0  4.77e-06  4.77e-06     1
+DormandPrince5::Evaluate                                            90.0  2.78e-06  7.55e-06     1
+H5CachedVarsWriter::Append                                          90.0  2.38e-06  2.38e-06     1
+AdaptiveDense::Evaluate                                             90.0  1.99e-06  9.53e-06     1
+======== This list includes 3.78min of total profiled time 4.20min ========

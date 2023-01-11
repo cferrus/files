@@ -1,1 +1,0 @@
-/mnt/home/cferrus/files/GeoDesics/bin/../bin/BBH_ID_WriteInputFiles.py

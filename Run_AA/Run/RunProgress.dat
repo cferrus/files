@@ -1,0 +1,7 @@
+# [1] Node
+# [2] t (Timestepper time of highest priority geodesic)
+# [3] T (Wallclock in hours)
+# [4] # of Steps one of the highest priority geodesics has taken
+# [5] # of Geodesics alive (roughly minus the number of threads)
+# [6] % until restart is needed
+  0 1.499900e+03 7.9784e-02      2       3562 0.340

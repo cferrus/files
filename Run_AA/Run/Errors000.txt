@@ -1,0 +1,26 @@
+
+#######################  REQUIRE  FAILED  #######################
+#### ds_id>=0  violated
+#### DataMeshReaderH5.cpp (line 340)
+Cannot open component 'tt' for variable 'psi',Step004428, file '/mnt/home/cferrus/ceph/RayTracing/q3-s005-s005-n11/Ev/Lev3_AC/Run/MetricData/Vars_SphereC1.h5'
+#################################################################
+
+0   SpEC                  0x28017cd  CodeError::CodeError(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool) + 93
+1   SpEC                   0xd0c6bd  0x0 + 13682365
+2   SpEC                  0x2791e74  DataMeshReaderH5::Read(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, Tensor<DataMesh>&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, bool) const + 7332
+3   SpEC                  0x2749645  CachedDataMeshReaderH5::Read(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, Tensor<DataMesh>&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, bool) const + 933
+4   SpEC                  0x176c292  0x0 + 24560274
+5   SpEC                  0x1877143  CachedTensorsOverTime::ObtainTensor(int, int, int, std::function<void (CachedTensorsOverTime::TensorInserter const&)> const&) + 435
+6   SpEC                  0x176da8d  InterpolatorDataReaders::InterpolatorCachedH5Reader::GetSequentialTensorsWork(double, MyVector<double> const&, MyVector<MyVector<double> >&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<MyVector<Tensor<DataMesh> const*> >&, MyVector<int>&, MyVector<int>&, MyVector<double>&, bool&, bool) + 1613
+7   SpEC                  0x176e7f5  InterpolatorDataReaders::InterpolatorCachedH5Reader::GetSequentialTensors(double, MyVector<double> const&, MyVector<MyVector<double> >&, MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<MyVector<Tensor<DataMesh> const*> >&, MyVector<int>&, MyVector<int>&, MyVector<double>&, bool&, bool) + 309
+8   SpEC                  0x1816b1f  PointwiseInterpolator::InterpolateTensorsToPoint(MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, MyVector<double> const&, double, MyVector<Tensor<double> >&) const + 1759
+9   SpEC                  0x181846f  PointwiseInterpolator::InterpolateTensorsToPoint(MyVector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, Tensor<double> const&, double, MyVector<Tensor<double> >&) const + 255
+10  SpEC                  0x17fe7dd  ExplicitRhsAlgorithms::BohnNumericalWithLapseP0::ComputeRhs(Vars<double> const&, double const&, Vars<double>&) + 1245
+11  SpEC                  0x14b4bc4  OdeSteppers::DormandPrince5<Vars<double> >::Integrate(Vars<double>&, double, double, bool) + 1764
+12  SpEC                  0x1578fa8  OdeIntegrators::AdaptiveDense<Vars<double> >::Integrate(Vars<double>&, double, double&, double, double, bool) + 920
+13  SpEC                  0x179c9b4  Geodesic::Integrate() + 132
+14  SpEC                   0xd961ea  0x0 + 14246378
+15  libgomp.so.1     0x15554f94b1e6  0x0 + 23456151548390
+16  libpthread.so.0  0x1555512c11cf  0x0 + 23456178246095
+17  libc.so.6        0x15554f38cdd3  clone + 67
+
